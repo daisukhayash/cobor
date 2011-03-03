@@ -1,37 +1,14 @@
+# -*- coding: utf-8 -*-
 require 'dl/import'
 require 'dl/struct'
 require 'cobor/record'
 require 'pp'
 
 module Cobor
-  #module Kernel32
-  #  extend DL::Importable
-  #
-  #  typealias('HANDLE', 'unsigned long')
-  #  typealias('LPVOID', 'void*')
-  #  typealias('DWORD', 'unsigned long')
-  #  typealias('BOOL', 'bool')
-  #
-  #  dlload "kernel32.dll"
-  #  extern 'unsigned long LocalAlloc(unsigned int,unsigned int)'
-  #  extern 'unsigned long LocalFree(HANDLE)'
-  #  extern 'unsigned long LocalLock(HANDLE)'
-  #  extern 'unsigned long LocalUnlock(HANDLE)'
-  #  extern 'unsigned long LocalSize(HANDLE)'
-  #  extern 'unsigned long LocalFree(HANDLE)'
-  #  extern 'unsigned long VirtualLock(LPVOID, DWORD)'
-  #  extern 'unsigned long VirtualUnlock(LPVOID, DWORD)'
-  #end
-
   module Invoker
     extend DL::Importable
 
     def self.call obj, *record
-      #dlload 'c:\netcobol\F3BIPRCT.dll'
-      #extern 'void JMPCINT2()'
-      #extern 'void JMPCINT3()'
-      #self.jMPCINT2()
-
       raise ArgumentError, "no such object: #{obj}" unless File.exists? obj
       dlload obj
       id = File.basename obj, '.dll'
@@ -48,14 +25,11 @@ module Cobor
         arg
       end
 
-      #args.each do |arg|
-      #  p Kernel32.virtualLock(arg.to_ptr, arg.size)
-      #end
-      pp args.map{|arg| arg.to_ptr}
+      #pp args.map{|arg| arg.to_ptr}
       extern "void #{id}(#{(['void*'] * args.size).join(', ')})"
       send(decap, *args.map{|arg| arg.to_ptr})
 
-      pp args.map{|arg| arg.to_ptr}
+      #pp args.map{|arg| arg.to_ptr}
       record.each_with_index do |rec, idx|
         rec.fields.each do |field|
           name = field.name
@@ -66,10 +40,6 @@ module Cobor
         end
       end
 
-      #args.each do |arg|
-      #  p Kernel32.virtualUnlock(arg.to_ptr, arg.size)
-      #end
-      #self.jMPCINT3
     end
   end
 end
@@ -95,24 +65,9 @@ if __FILE__ == $0
            '03 CNT2-6 PIC S9(5) COMP-5.',
            '03 MSG4 PIC X(15).'
                               ]
-  #int cnt1_1       4
-  #char cnt1_2[3]   3  7
-  #char msg1[20]   20 27
-  #char cnt1_3[5]   5 32
-  #char nmsg1[20]  20 52
 
-  #int var24851550         4  4
-  #char var24850410[20]   20 24
-  #char var24849180[3]     3 27
-  #char cnt2_3[5]          5 32
-  #char cnt2_4[3]          3 35
-  #int cnt2_5              4 39
-  #char msg3[5]            5 44
-  #int cnt2_6              4 48
-  #char msg4[15]          15 63
-
-  puts rec1.c_decl #52
-  puts rec2.c_decl # 67
+  puts rec1.c_decl
+  puts rec2.c_decl
 
   puts "初期値----------------"
   p rec1.cnt1_1
