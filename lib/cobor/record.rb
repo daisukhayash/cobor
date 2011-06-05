@@ -6,7 +6,7 @@ require 'pp'
 module Cobor
   class Record
     def initialize()
-      @data = nil
+      @fields = []
     end
 
     class << self
@@ -37,40 +37,57 @@ module Cobor
       end
     end
 
-    def size
-      fields.inject(0){|sum, field| sum + field.bytesize}
-    end
-
-    def names
-      fields.map{|field| field.name}
-    end
-
-    def values
-      fields.map{|field| field.value}
-    end
-
     def field(name)
-      fields.find{|field| field.name == name} or fields.find{|field| "serial_#{field.name}" == name}
+      @fields.find do |field|
+        if field.is_a? FieldArray
+          field.name == name or "serial_#{field.name}" == name
+        else
+          field.name == name or "serial_#{field.name}" == name
+        end
+      end
     end
 
     def fields
-      @fields ||= []
+      @fields.flatten.sort { |a, b| a.offset <=> b.offset }
+    end
+
+    def size
+      fields.inject(0) { |sum, field| sum + field.bytesize }
+    end
+
+    def names
+      fields.map { |field| field.uname }
+    end
+
+    def values
+      fields.map { |field| field.value }
     end
 
     def clear
-      fields.each{|field| field.clear}
+      fields.each{ |field| field.clear }
       self
     end
 
     def [](name)
-      (field = field(name)) and return (/serial_/ =~ name ? field.serial_value : field.value)
+      if (f = field(name))
+        if f.is_a? FieldArray
+          return (/serial_/ =~ name ? f.serial : f.normal)
+        else
+          return (/serial_/ =~ name ? f.serial_value : f.value)
+        end
+      end
       raise ArgumentError, "no such field: #{name}"
     end
 
     def []=(name, val)
-      (field = field(name)) and
-        (/serial_/ =~ name ? field.serial_value = val : field.value = val) and
-        return val
+      if (f = field(name))
+        if f.is_a? FieldArray
+          return f
+        else
+          (/serial_/ =~ name ? f.serial_value = val : f.value = val) and
+            return val
+        end
+      end
       raise ArgumentError, "no such field: #{name}"
     end
 
@@ -83,28 +100,30 @@ module Cobor
     end
 
     def parse_contents(contents)
-      contents.map do |content|
-        if content.is_a? Array
-          content.map do |a_content|
-            parse_a_content(a_content)
-          end
-        else
-          [parse_a_content(content)]
-        end
-      end
+      @offset = 0
+      @frame = Frame.parse(contents)
+      define_ @frame
     end
 
-    def parse_a_content(a_content)
-      return if /\A\s*\*/ =~ a_content
-      if /(\S+)\s+PIC\s+(\S+)\s*\(([0-9]+)\)/i =~ a_content
-        name = $1.dup
-        type = $2.dup.upcase
-        size = $3.dup.to_i
-        usage = ($&.dup).upcase if /COMP-[35]/i =~ $'
-        type << usage if usage
-        #p "name=#{name}, type=#{type}, size=#{size}, usage=#{usage}"
-        (@cobstruct ||= []).push a_content
-        define_field(name, type, size)
+    def frame
+      @frame
+    end
+
+    def define_ frame, suffix=''
+      frame.repeat.times do |repeat|
+        suf = frame.repeat > 1 ? "#{suffix}_#{repeat}" : suffix
+        define_accessor "#{frame.name}#{suf}"
+        define_accessor frame.name unless self.respond_to? frame.name
+        name = "#{frame.name}#{suf}"
+        frame.up do |upper|
+          define_accessor (name = "#{name}_OF_#{upper.name}")
+        end
+        unless frame.type.nil?
+          field = define_field frame.name, suf, frame.type, frame.size
+        end
+        frame.members.each do |member|
+          define_ member, suf
+        end
       end
     end
 
@@ -122,13 +141,25 @@ module Cobor
 
     private
 
-    def define_field(name, type, size)
-      (@fields ||= []).push Field.new(name, type, size)
-      define_accessor @fields.last
+    def define_field name, suffix, type, size
+      field = Field.new(name, suffix, type, size, @offset)
+      @offset += field.bytesize
+      @fields.each_with_index do |obj, i|
+        if obj.is_a? FieldArray
+          next unless obj.name == name
+          obj << field
+          return field
+        else
+          next unless obj.name == name
+          @fields[i] = FieldArray.new([obj, field])
+          return field
+        end
+      end
+      @fields << field
+      return field
     end
 
-    def define_accessor(field)
-      name = field.name
+    def define_accessor name, repeat=0
       instance_eval(<<-End, __FILE__, __LINE__ + 1)
         def #{name}
           self['#{name}']
@@ -149,13 +180,113 @@ module Cobor
     end
   end
 
+  class Frame
+    attr_accessor :level, :name, :repeat, :members, :upper, :type, :size
+
+    def initialize definition
+      if /\s*([0-9]{2})\s+([^\s.]+)(?:\s.*OCCURS\s+([0-9]+))?/i =~ definition
+        @level = $1.to_i
+        @name = $2.dup
+        @repeat = $3.nil? ? 1 : $3.to_i
+        @upper = nil
+        if /PIC\s+(\S+)\s*\(([0-9]+)\)/i =~ definition
+          @type = $1.upcase
+          @size = $2.to_i
+          usage = $&.upcase if /COMP-[35]/i =~ $'
+          @type << usage if usage
+        end
+      else
+        raise ArgumentError
+      end
+      @members = []
+    end
+
+    def self.parse definition
+      top = prev = Frame.new("00 TOP.")
+      definition.each do |d|
+        next if /\A\s*\*/ =~ d
+
+        current = Frame.new d
+        current.upper = current.find_upper prev
+        current.upper.members << current
+        prev = current
+      end
+      return top
+    end
+
+    def find_upper obj
+      if obj.level == level
+        return obj.upper
+      elsif obj.level < level
+        return obj
+      elsif obj.level > level
+        find_upper obj.upper
+      end
+    end
+
+    def each
+      yield self
+      members.each do |mem|
+        mem.each
+      end
+    end
+
+    def up
+      f = self
+      until (f = f.upper).nil?
+        yield f
+      end
+    end
+  end
+
+  class FieldArray < Array
+    def normal
+      @ret_type = :normal
+      self
+    end
+
+    def serial
+      @ret_type = :serial
+      self
+    end
+
+    def []=(index, val)
+      field = self.at(index)
+      @ret_type == :serial ? field.serial_value  = val : field.value = val
+      val
+    end
+
+    def [](index)
+      field = self.at(index)
+      @ret_type == :serial ? field.serial_value : field.value
+    end
+
+    def name
+      self.first.name
+    end
+
+    def bytesize
+      self.inject(0){ |sum, field| sum + field.bytesize }
+    end
+
+    def value
+      self.map { |field| field.value }
+    end
+
+    def serialize
+      self.map { |field| field.serialize }
+    end
+  end
+
   class Field
-    def initialize name, type, size
+    def initialize name, suffix, type, size, offset
       @@TYPE ||= Type
       @name = (name.gsub(/-/,'_') or name)
-      @cname =  /\A[_A-Za-z]/ =~ @name ? @name : 'var'+self.object_id.to_s
+      @uname = @name + (suffix.size>0 ? suffix : '')
+      @cname = Field.create_cname(@uname)
       @type = type
       @size = size
+      @offset = offset
 
       raise ArgumentError unless @@TYPE.include? type
 
@@ -166,10 +297,15 @@ module Cobor
     end
 
     attr_reader :name
+    attr_reader :uname
     attr_reader :cname
     attr_reader :size
     attr_reader :bytesize
+    attr_reader :offset
 
+    def self.create_cname str
+      /\A[_A-Za-z]/ =~ str ? str : 'var' + str.unpack('H*').first
+    end
     def fieldtype
       @type
     end
