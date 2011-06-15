@@ -115,7 +115,7 @@ module Cobor
         define_accessor "#{frame.name}#{suf}"
         define_accessor frame.name unless self.respond_to? frame.name
         name = "#{frame.name}#{suf}"
-        frame.up do |upper|
+        frame.stepup do |upper|
           define_accessor (name = "#{name}_OF_#{upper.name}")
         end
         unless frame.type.nil?
@@ -205,7 +205,6 @@ module Cobor
       top = prev = Frame.new("00 TOP.")
       definition.each do |d|
         next if /\A\s*\*/ =~ d
-
         current = Frame.new d
         current.upper = current.find_upper prev
         current.upper.members << current
@@ -231,7 +230,7 @@ module Cobor
       end
     end
 
-    def up
+    def stepup
       f = self
       until (f = f.upper).nil?
         yield f
@@ -241,24 +240,24 @@ module Cobor
 
   class FieldArray < Array
     def normal
-      @ret_type = :normal
+      @value_type = :normal
       self
     end
 
     def serial
-      @ret_type = :serial
+      @value_type = :serial
       self
     end
 
     def []=(index, val)
       field = self.at(index)
-      @ret_type == :serial ? field.serial_value  = val : field.value = val
+      @value_type == :serial ? field.serial_value  = val : field.value = val
       val
     end
 
     def [](index)
       field = self.at(index)
-      @ret_type == :serial ? field.serial_value : field.value
+      @value_type == :serial ? field.serial_value : field.value
     end
 
     def name
