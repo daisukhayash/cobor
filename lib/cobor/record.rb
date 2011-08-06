@@ -12,14 +12,9 @@ module Cobor
     class << self
       def define(contents)
         obj = self.new
-        obj.parse_contents(contents)
+        obj.create_record(contents)
         obj
       end
-    end
-
-    def add(content)
-      parse_a_content(content)
-      self
     end
 
     def inspect
@@ -99,17 +94,17 @@ module Cobor
       self
     end
 
-    def parse_contents(contents)
+    def create_record(contents)
       @offset = 0
       @frame = Frame.parse(contents)
-      define_ @frame
+      create @frame
     end
 
     def frame
       @frame
     end
 
-    def define_ frame, suffix=''
+    def create frame, suffix=''
       frame.repeat.times do |repeat|
         suf = frame.repeat > 1 ? "#{suffix}_#{repeat}" : suffix
         define_accessor "#{frame.name}#{suf}"
@@ -119,10 +114,10 @@ module Cobor
           define_accessor (name = "#{name}_OF_#{upper.name}")
         end
         unless frame.type.nil?
-          field = define_field frame.name, suf, frame.type, frame.size
+          field = create_field frame.name, suf, frame.type, frame.size
         end
         frame.members.each do |member|
-          define_ member, suf
+          create member, suf
         end
       end
     end
@@ -141,7 +136,7 @@ module Cobor
 
     private
 
-    def define_field name, suffix, type, size
+    def create_field name, suffix, type, size
       field = Field.new(name, suffix, type, size, @offset)
       @offset += field.bytesize
       @fields.each_with_index do |obj, i|
